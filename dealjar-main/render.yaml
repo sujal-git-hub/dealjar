@@ -1,0 +1,100 @@
+# Render Blueprint: New -> Blueprint -> pick this repo. Secrets marked sync:false are typed into the dashboard, never
+# committed. DEPLOY.md says where each value comes from. The web service serves the API and the built app on one port.
+#
+# The four cron jobs are separate Render services (billed on their own: check Render's pricing page). If you'd rather
+# not pay for them, delete the cron services below and call POST /api/cron/<job> with the x-cron-secret header from any
+# free scheduler instead (see DEPLOY.md, "Scheduled jobs").
+envVarGroups:
+  - name: dealjar-shared
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: NIMIQ_RPC_URL
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+
+services:
+  - type: web
+    name: dealjar
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - fromGroup: dealjar-shared
+      - key: DEALJAR_SEED
+        value: "0" # no fictional sponsors in production
+      - key: DEALJAR_DEMO
+        value: "0"
+      - key: DEALJAR_DEMO_PAYMENTS
+        value: "0"
+      - key: S3_REGION
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: ADMIN_ADDRESSES
+        sync: false
+      - key: POOL_ADDRESS
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: PRICE_API_KEY
+        sync: false
+
+  # Every 5 minutes: find payments sent but never confirmed (by memo), and pay referrals that were waiting for the pot.
+  - type: cron
+    name: dealjar-reconcile
+    runtime: node
+    plan: starter
+    schedule: "*/5 * * * *"
+    buildCommand: npm ci --include=dev
+    startCommand: npm run cron -- reconcile
+    envVars:
+      - fromGroup: dealjar-shared
+
+  # Every 10 minutes: reservations that were never paid go back to their pots.
+  - type: cron
+    name: dealjar-expire
+    runtime: node
+    plan: starter
+    schedule: "*/10 * * * *"
+    buildCommand: npm ci --include=dev
+    startCommand: npm run cron -- expire
+    envVars:
+      - fromGroup: dealjar-shared
+
+  # Hourly: NIM, euro and gold prices.
+  - type: cron
+    name: dealjar-prices
+    runtime: node
+    plan: starter
+    schedule: "7 * * * *"
+    buildCommand: npm ci --include=dev
+    startCommand: npm run cron -- prices
+    envVars:
+      - fromGroup: dealjar-shared
+      - key: PRICE_API_KEY
+        sync: false
+
+  # Daily: tidy old sign-in codes and job logs.
+  - type: cron
+    name: dealjar-daily
+    runtime: node
+    plan: starter
+    schedule: "30 3 * * *"
+    buildCommand: npm ci --include=dev
+    startCommand: npm run cron -- daily
+    envVars:
+      - fromGroup: dealjar-shared
